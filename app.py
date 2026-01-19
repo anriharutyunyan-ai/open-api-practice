@@ -10,15 +10,10 @@ load_dotenv()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-
-supabase = None
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-else:
-    print("Warning: Supabase credentials not found.")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__, static_folder='public')
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "super_secret_key_change_this")
+# app.secret_key = os.getenv("FLASK_SECRET_KEY", "super_secret_key_change_this")
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 

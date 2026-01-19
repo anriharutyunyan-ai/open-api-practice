@@ -1,0 +1,84 @@
+AI Mechanic Advisor
+
+A professional AI-powered advisor for bikes, cars, engines, and general maintenance.
+Built with Flask, OpenAI GPT, and a modern Bootstrap frontend. Stores conversation history locally and can show similar past cases.
+
+Features
+
+rofessional mechanic advice for bikes, cars, engines, and electrical systems
+
+ Shows similar past cases (optional RAG integration)
+
+ Local conversation history (last 10 messages)
+
+Loading spinner & responsive UI
+
+Easy to extend for Supabase integration or private mode
+
+Tech Stack
+
+Frontend: HTML, CSS (Bootstrap), Vanilla JS
+
+Backend: Python, Flask
+
+AI: OpenAI GPT-3.5 / GPT-4 (optional upgrade)
+
+Optional: Supabase for semantic search / RAG
+
+Installation
+
+Clone the repo
+
+git clone https://github.com/yourusername/ai-mechanic-advisor.git
+cd ai-mechanic-advisor
+
+
+Install dependencies
+
+pip install flask openai python-dotenv
+
+
+Create a .env file
+
+OPENAI_API_KEY=sk-xxxx-your-openai-key
+FLASK_SECRET_KEY=super_secret_key
+SUPABASE_URL=your_supabase_url       
+SUPABASE_SERVICE_ROLE_KEY=your_key   
+
+
+Run the app
+
+python app.py
+
+
+Open in browser: http://127.0.0.1:5000
+
+Project Structure
+├─ public/
+│  ├─ index.html       
+│  ├─ app.js           
+│  └─ styles.css      
+├─ app.py             
+└─ .env               
+
+Usage
+
+Select a category (bike, car, engine, maintenance, electrical)
+
+Describe your problem in the text area
+
+Click Get Advice
+
+View AI response, similar cases, and conversation history
+
+Optional Upgrades
+
+ User login + private mode
+
+ RAG with Supabase or other vector DB
+
+ Mobile-first UI
+
+ Supabase Edge / production deployment
+ 
+ Rate-limiting & safety checks
