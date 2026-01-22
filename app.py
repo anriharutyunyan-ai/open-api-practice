@@ -1,171 +1,173 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, render_template
 from openai import OpenAI
 from supabase import create_client
 import os
-from dotenv import load_dotenv  
+from dotenv import load_dotenv
 
-
+# 1. Load environment variables from .env file
 load_dotenv()
 
+# 2. Initialize Flask with explicit folder paths
+# This ensures Flask knows exactly where to look for HTML and CSS/JS
+app = Flask(__name__, template_folder='templates', static_folder='static')
 
+# 3. Configuration & Client Setup
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-app = Flask(__name__, static_folder='public')
-# app.secret_key = os.getenv("FLASK_SECRET_KEY", "super_secret_key_change_this")
+# Initialize Supabase (Database)
+try:
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase connected.")
+    else:
+        supabase = None
+        print("⚠️ Supabase credentials missing. 'Similar Cases' feature disabled.")
+except Exception as e:
+    print(f"❌ Supabase Init Error: {e}")
+    supabase = None
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize OpenAI (AI Model)
+try:
+    if OPENAI_API_KEY:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        print("✅ OpenAI connected.")
+    else:
+        client = None
+        print("⚠️ OpenAI API Key missing.")
+except Exception as e:
+    print(f"❌ OpenAI Init Error: {e}")
+    client = None
+
+
+# --- Helper Functions ---
 
 def embed_query(text: str) -> list[float]:
-    """Generate embeddings for text"""
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text
-    )
-    return response.data[0].embedding
+    """Generate embeddings for text using OpenAI"""
+    if not client: return []
+    try:
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        print(f"Embedding Error: {e}")
+        return []
 
 def semantic_search(user_message: str) -> list:
-    """Semantic search in Supabase"""
-    if not supabase:
-        return []
+    """Search for similar past cases in Supabase"""
+    if not supabase: return []
     
     try:
-        # Generate embedding for the query
         query_embedding = embed_query(user_message)
-        
-        # Call Supabase RPC function
+        if not query_embedding: return []
+
+        # Calls the Postgres RPC function 'match_conversations'
         res = supabase.rpc(
             "match_conversations",
             {
                 "query_embedding": query_embedding,
-                "match_count": 5,
-                "match_threshold": 0.7
+                "match_count": 3,
+                "match_threshold": 0.5
             }
         ).execute()
         
         return res.data if res.data else []
     except Exception as e:
-        print(f"Semantic search error: {e}")
+        print(f"Search Error (Check if 'match_conversations' RPC exists in Supabase): {e}")
         return []
 
 
-@app.get("/")
+# --- Routes ---
+
+@app.route("/")
 def index():
-    return send_from_directory("public", "index.html")
+    """Serves the main HTML page"""
+    return render_template("index.html")
 
-
-@app.post("/api/chat")
+@app.route("/api/chat", methods=["POST"])
 def chat():
+    """Handles the chat logic"""
+    if not client:
+        return jsonify({"error": "OpenAI API Key is missing on the server."}), 500
+
     data = request.get_json(silent=True) or {}
     user_message = data.get("message", "")
     category = data.get("category", "general")
     
-    # Validate input
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
     
-    # Conduct semantic search
+    # 1. Search for similar past cases (RAG)
     search_results = semantic_search(user_message)
     
-    # Format context from search results
-    context = ""
+    # 2. Format Context for the AI
+    context_text = ""
     if search_results:
         context_parts = []
         for i, row in enumerate(search_results):
-            similarity = row.get('similarity', 0)
-            prompt = row.get('prompt', '')
-            response = row.get('response', '')
-            context_parts.append(
-                f"[Similar Case {i+1} | Similarity: {similarity:.1%}]\n"
-                f"Problem: {prompt}\n"
-                f"Solution: {response}"
-            )
-        context = "\n\n".join(context_parts)
+            prompt = row.get('prompt', 'N/A')
+            response_text = row.get('response', 'N/A')
+            context_parts.append(f"--- SIMILAR CASE {i+1} ---\nProblem: {prompt}\nSolution: {response_text}")
+        context_text = "\n\n".join(context_parts)
     
-    # Build system prompt
+    # 3. Construct the System Prompt
     system_prompt = f"""
-    You are a professional {category} mechanic with 20 years of experience.
-    Provide clear, step-by-step diagnostic and repair advice.
-    Include safety warnings, required tools, and estimated difficulty level.
-    Be practical and concise.
+    You are an expert mechanic specializing in {category}. 
+    Format your response with standard Markdown: use **Bold** for headers/warnings and bullet points for steps.
     
-    Additional instructions:
-    1. If similar cases are provided, reference them when relevant
-    2. Always prioritize safety
-    3. List required tools
-    4. Estimate difficulty (Beginner/Intermediate/Expert)
-    5. Mention if professional help is recommended
+    Structure your advice as follows:
+    1. **Diagnosis**: What is likely wrong.
+    2. **Safety Warning**: Crucial safety steps (battery disconnect, jack stands, etc).
+    3. **Tools Required**: Bulleted list.
+    4. **Step-by-Step Fix**: Clear instructions.
+    5. **Recommendation**: When to see a professional.
+
+    Use the provided CONTEXT (similar past cases) if relevant to refine your answer.
     """
     
-    # Build RAG message with context
-    rag_message = {
-        "role": "system",
-        "content": (
-            "USE the retrieved context below to answer. IF it doesn't contain the answer, "
-            "use your general knowledge as a professional mechanic.\n\n"
-            f"Context from similar cases:\n{context if context else 'No similar cases found.'}"
-        )
-    }
+    rag_instruction = f"CONTEXT FROM DATABASE:\n{context_text}" if context_text else "No similar past cases found."
     
-    # Build full user message
-    full_user_message = {
-        "role": "user",
-        "content": (
-            f"I need help with a {category} problem:\n"
-            f"{user_message}\n\n"
-            "Please provide professional mechanic advice."
-        )
-    }
-
-    # Create full message list in correct order
-    full_message_list = [
+    messages = [
         {"role": "system", "content": system_prompt},
-        rag_message,
-        full_user_message
+        {"role": "system", "content": rag_instruction},
+        {"role": "user", "content": user_message}
     ]
     
     try:
-        # Get AI response - CORRECTED: removed invalid "input" parameter
+        # 4. Generate AI Response
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  
-            messages=full_message_list,
-            max_tokens=500,
-            temperature=0.7
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=800
         )
         
         ai_response = response.choices[0].message.content
         
-        # Generate embedding for the query
-        embedding = None
-        try:
-            embedding = embed_query(user_message)
-        except Exception as e:
-            print(f"Embedding error: {e}")
-        
-        # Save to Supabase
-        if supabase and embedding:
+        # 5. Save conversation to Supabase (if connected)
+        if supabase:
             try:
-                supabase.table('conversations').insert({
-                    "prompt": user_message,
-                    "response": ai_response,
-                    "category": category,
-                    "embedding": embedding
-                }).execute()
+                new_embedding = embed_query(user_message)
+                if new_embedding:
+                    supabase.table('conversations').insert({
+                        "prompt": user_message,
+                        "response": ai_response,
+                        "category": category,
+                        "embedding": new_embedding
+                    }).execute()
             except Exception as e:
-                print(f"Supabase save error: {e}")
+                print(f"Failed to save conversation: {e}")
         
         return jsonify({
             "text": ai_response,
-            "similar_cases": search_results[:3]  # Send top 3 similar cases
+            "similar_cases": search_results
         })
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/<path:path>')
-def serve_static(path):
-    return send_from_directory('public', path)
-
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5000)
